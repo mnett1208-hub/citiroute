@@ -1,0 +1,27 @@
+name: Build IPA
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: XcodeGen installieren
+        run: brew install xcodegen
+      - name: Projekt erzeugen
+        run: xcodegen generate
+      - name: Bauen (unsigniert)
+        run: |
+          xcodebuild -project CitiRoute.xcodeproj -scheme CitiRoute -configuration Release \
+            -sdk iphoneos -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+      - name: IPA packen
+        run: |
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/CitiRoute.app Payload/
+          zip -qr CitiRoute.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CitiRoute-ipa
+          path: CitiRoute.ipa
