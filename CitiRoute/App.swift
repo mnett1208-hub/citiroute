@@ -76,6 +76,7 @@ struct MainTabs: View {
 
 // MARK: Scan
 
+@MainActor
 struct ScannerView: UIViewControllerRepresentable {
     var onLines: ([String]) -> Void
     func makeCoordinator() -> Coord { Coord(onLines) }
@@ -88,20 +89,36 @@ struct ScannerView: UIViewControllerRepresentable {
     func updateUIViewController(_ vc: DataScannerViewController, context: Context) { context.coordinator.cb = onLines }
     static func dismantleUIViewController(_ vc: DataScannerViewController, coordinator: Coord) { coordinator.stop(vc) }
 
-    final class Coord {
+    @MainActor
+    final class Coord: NSObject, DataScannerViewControllerDelegate {
         var cb: ([String]) -> Void
-        var timer: Timer?
+        var items: [RecognizedItem] = []
+        var task: Task<Void, Never>?
+        weak var vc: DataScannerViewController?
         init(_ cb: @escaping ([String]) -> Void) { self.cb = cb }
+
         func start(_ vc: DataScannerViewController) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { try? vc.startScanning() }
-            timer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self, weak vc] _ in
-                guard let self = self, let vc = vc, vc.isScanning else { return }
-                var items: [(CGFloat, String)] = []
-                for it in vc.recognizedItems { if case .text(let t) = it { items.append((t.bounds.topLeft.y, t.transcript)) } }
-                self.cb(items.sorted { $0.0 < $1.0 }.flatMap { $0.1.components(separatedBy: "\n") })
+            self.vc = vc
+            vc.delegate = self
+            task = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                if let v = self?.vc { try? v.startScanning() }
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                    self?.tick()
+                }
             }
         }
-        func stop(_ vc: DataScannerViewController) { timer?.invalidate(); vc.stopScanning() }
+        func tick() {
+            var lines: [(CGFloat, String)] = []
+            for it in items { if case .text(let t) = it { lines.append((t.bounds.topLeft.y, t.transcript)) } }
+            cb(lines.sorted { $0.0 < $1.0 }.flatMap { $0.1.components(separatedBy: "\n") })
+        }
+        func stop(_ vc: DataScannerViewController) { task?.cancel(); vc.stopScanning() }
+
+        func dataScanner(_ s: DataScannerViewController, didAdd added: [RecognizedItem], allItems: [RecognizedItem]) { items = allItems }
+        func dataScanner(_ s: DataScannerViewController, didUpdate updated: [RecognizedItem], allItems: [RecognizedItem]) { items = allItems }
+        func dataScanner(_ s: DataScannerViewController, didRemove removed: [RecognizedItem], allItems: [RecognizedItem]) { items = allItems }
     }
 }
 
